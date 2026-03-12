@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Extrator de XML NFe para Excel</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+
+    p {
+      line-height: 1.5;
+    }
+
+    input[type="file"] {
+      margin: 16px 0;
+    }
+
+    button {
+      background: #1f6feb;
+      color: white;
+      border: none;
+      padding: 12px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      margin-right: 10px;
+    }
+
+    button:hover {
+      background: #1557b0;
+    }
+
+    button:disabled {
+      background: #9aa4b2;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 20px;
+      white-space: pre-line;
+      background: #f1f5f9;
+      padding: 12px;
+      border-radius: 8px;
+      min-height: 60px;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #555;
+    }
+
+    .success {
+      color: #0a7a2f;
+      font-weight: bold;
+    }
+
+    .error {
+      color: #b42318;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Extrator de XML NFe para Excel</h1>
+    <p>
+      Selecione vários arquivos XML de NFe. O sistema vai extrair os dados e gerar uma planilha Excel.
+    </p>
+
+    <input type="file" id="xmlFiles" accept=".xml,text/xml" multiple />
+    <br />
+    <button id="processBtn">Gerar planilha</button>
+    <button id="clearBtn">Limpar</button>
+
+    <div id="status" class="small">Aguardando arquivos...</div>
+  </div>
+
+  <script>
+    /*
+      ============================================================
+      CONFIGURAÇÃO DOS CAMPOS
+      ============================================================
+
+      label      = nome da coluna no Excel
+      path       = caminho relativo no XML
+      scope      = "header" para dados do cabeçalho da nota
+                   "item"   para dados de cada produto (det/prod)
+      required   = opcional, só para controle seu
+    */
+    const FIELD_MAP = [
+      { label: "Número Nota",           path: "ide/nNF",    scope: "header",    required: true },
+      { label: "Série",                 path: "ide/serie",  scope: "header",    required: true },
+      { label: "Valor",                 path: "prod/vNf", scope: "header",    required: true },
+      { label: "Nome Fornecedor",       path: "emit/xNome", scope: "header",    required: true },
+      { label: "CNPJ Fornecedor",       path: "emit/CNPJ",  scope: "header",    required: true },
+
+      { label: "Nome Destino",          path: "dest/xNome", scope: "header",    required: true },
+      { label: "CNPJ Destino",          path: "dest/CNPJ",  scope: "header",    required: true },
+
+      { label: "Código do Produto",     path: "prod/cProd", scope: "item",      required: true },
+      { label: "Descrição do Produto",  path: "prod/xProd", scope: "item",      required: true }
+    ];
+
+    const fileInput = document.getElementById("xmlFiles");
+    const processBtn = document.getElementById("processBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const statusEl = document.getElementById("status");
+
+    processBtn.addEventListener("click", processFiles);
+    clearBtn.addEventListener("click", () => {
+      fileInput.value = "";
+      statusEl.textContent = "Aguardando arquivos...";
+    });
+
+    function setStatus(message, type = "") {
+      statusEl.className = "small";
+      if (type) statusEl.classList.add(type);
+      statusEl.textContent = message;
+    }
+
+    async function processFiles() {
+      const files = Array.from(fileInput.files || []);
+
+      if (!files.length) {
+        setStatus("Selecione pelo menos um arquivo XML.", "error");
+        return;
+      }
+
+      processBtn.disabled = true;
+      setStatus(`Processando ${files.length} arquivo(s)...`);
+
+      try {
+        const allRows = [];
+        const errors = [];
+
+        for (const file of files) {
+          try {
+            const text = await file.text();
+            const rows = parseNFeXml(text, file.name);
+            allRows.push(...rows);
+          } catch (err) {
+            errors.push(`Erro no arquivo ${file.name}: ${err.message}`);
+          }
+        }
+
+        if (!allRows.length) {
+          const msg = errors.length
+            ? `Nenhum dado válido encontrado.\n\n${errors.join("\n")}`
+            : "Nenhum dado válido encontrado nos XMLs.";
+          setStatus(msg, "error");
+          return;
+        }
+
+        exportToExcel(allRows);
+
+        let message = `Planilha gerada com sucesso.\nLinhas exportadas: ${allRows.length}`;
+        if (errors.length) {
+          message += `\n\nArquivos com erro:\n${errors.join("\n")}`;
+        }
+
+        setStatus(message, "success");
+      } catch (err) {
+        setStatus(`Erro geral: ${err.message}`, "error");
+      } finally {
+        processBtn.disabled = false;
+      }
+    }
+
+    function parseNFeXml(xmlString, fileName = "") {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+
+      const parserError = xmlDoc.querySelector("parsererror");
+      if (parserError) {
+        throw new Error("XML inválido ou mal formatado.");
+      }
+
+      // Localiza o nó infNFe independentemente de namespace
+      const infNFe = findFirstByLocalName(xmlDoc, "infNFe");
+      if (!infNFe) {
+        throw new Error("Não foi encontrado o nó infNFe.");
+      }
+
+      // Todos os itens/produtos
+      const detList = findChildrenByLocalName(infNFe, "det");
+      if (!detList.length) {
+        throw new Error("Não foi encontrado nenhum item det no XML.");
+      }
+
+      const headerData = {};
+
+      // Extrai campos de cabeçalho uma vez
+      FIELD_MAP
+        .filter(field => field.scope === "header")
+        .forEach(field => {
+          headerData[field.label] = getValueByPath(infNFe, field.path);
+        });
+
+      const rows = [];
+
+      for (const det of detList) {
+        const row = {
+          "Arquivo XML": fileName
+        };
+
+        // adiciona dados de cabeçalho
+        for (const field of FIELD_MAP.filter(f => f.scope === "header")) {
+          row[field.label] = headerData[field.label] || "";
+        }
+
+        // adiciona dados do item
+        for (const field of FIELD_MAP.filter(f => f.scope === "item")) {
+          row[field.label] = getValueByPath(det, field.path) || "";
+        }
+
+        rows.push(row);
+      }
+
+      return rows;
+    }
+
+    function getValueByPath(startNode, path) {
+      const parts = path.split("/").filter(Boolean);
+      let currentNode = startNode;
+
+      for (const part of parts) {
+        currentNode = findDirectChildByLocalName(currentNode, part);
+        if (!currentNode) return "";
+      }
+
+      return (currentNode.textContent || "").trim();
+    }
+
+    function findFirstByLocalName(root, localName) {
+      const all = root.getElementsByTagName("*");
+      for (const node of all) {
+        if (node.localName === localName) {
+          return node;
+        }
+      }
+      return null;
+    }
+
+    function findChildrenByLocalName(node, localName) {
+      const result = [];
+      for (const child of node.children) {
+        if (child.localName === localName) {
+          result.push(child);
+        }
+      }
+      return result;
+    }
+
+    function findDirectChildByLocalName(node, localName) {
+      for (const child of node.children) {
+        if (child.localName === localName) {
+          return child;
+        }
+      }
+      return null;
+    }
+
+    function exportToExcel(data) {
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+
+      XLSX.utils.book_append_sheet(workbook, worksheet, "NFe");
+
+      XLSX.writeFile(workbook, "nfe_extraida.xlsx");
+    }
+  </script>
+</body>
+</html>
