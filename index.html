@@ -108,9 +108,11 @@
       required   = opcional, só para controle seu
     */
     const FIELD_MAP = [
-      { label: "Número Nota",           path: "ide/nNF",    scope: "header",    required: true },
+      { label: "Nota",                  path: "ide/nNF",    scope: "header",    required: true },
       { label: "Série",                 path: "ide/serie",  scope: "header",    required: true },
-      { label: "Valor",                 path: "prod/vNf", scope: "header",    required: true },
+      { label: "Valor Unitário",        path: "prod/vUnCom",scope: "item",      required: true },
+      { label: "Quantidade",            path: "prod/qCom",  scope: "item",      required: true },
+      { label: "Total",                 path: "prod/vProd", scope: "item",      required: true },
       { label: "Nome Fornecedor",       path: "emit/xNome", scope: "header",    required: true },
       { label: "CNPJ Fornecedor",       path: "emit/CNPJ",  scope: "header",    required: true },
 
